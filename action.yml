@@ -1,13 +1,12 @@
-name: 'Wait'
-description: 'Wait a designated number of milliseconds'
+name: 'Check Licenses'
+description: 'Detect new dependencies in a PR and add reminder comments to review licensing details'
 inputs:
-  milliseconds:  # id of input
-    description: 'number of milliseconds to wait'
+  dependency-file:
+    description: 'Path to a package.json/requirements.txt file'
     required: true
-    default: '1000'
-outputs:
-  time: # output will be available to future steps
-    description: 'The current time after waiting'
+  message-file:
+    description: 'Path to markdown message mustache template'
+    required: true
 runs:
   using: 'node16'
   main: 'dist/index.js'
