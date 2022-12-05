@@ -22536,7 +22536,7 @@ class PullRequest {
     const pullNumber = parsePullNumber();
     const { owner, repo } = parseRepo();
     const pullRequest = new PullRequest(pullNumber, owner, repo);
-    await this.load();
+    await pullRequest.load();
     return pullRequest;
   }
 
