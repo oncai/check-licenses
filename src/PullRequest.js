@@ -40,7 +40,7 @@ class PullRequest {
 
   async addComment(comment) {
     if (this.doesCommentExist(comment)) {
-      console.log('Comment exists -- skipping');
+      core.info('Comment exists -- skipping');
       return;
     }
 
@@ -75,12 +75,8 @@ class PullRequest {
   }
 
   async getFile(file) {
-    // const filePath = [this.owner, this.repo, this.headSha, file].join('/');
-    // const fileUrl = `https://raw.githubusercontent.com/${filePath}`;
-    // const res = await octokit.request(fileUrl);
-    const fileBuffer = await fs.readFile(
-      path.join(process.env.GITHUB_WORKSPACE, file),
-    );
+    const currentPath = process.env.GITHUB_WORKSPACE;
+    const fileBuffer = await fs.readFile(path.join(currentPath, file));
     return fileBuffer.toString('utf-8');
   }
 
@@ -105,8 +101,15 @@ class PullRequest {
       await this.loadPull();
     }
 
-    core.info(`Loading diff from github: ${this.pull.diff_url}`);
-    const res = await octokit.request(this.pull.diff_url);
+    core.info(`Loading diff from github: ${this.pullNumber}`);
+    const res = await pulls.get({
+      owner: this.owner,
+      repo: this.repo,
+      pull_number: this.pullNumber,
+      mediaType: {
+        format: 'diff',
+      },
+    });
     this.diff = parseDiff(res.data);
   }
 
