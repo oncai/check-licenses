@@ -22529,14 +22529,14 @@ const parseDiff = __nccwpck_require__(4833);
 const path = __nccwpck_require__(5622);
 
 const checkNewPackages = __nccwpck_require__(463);
-const { octokit, pulls } = __nccwpck_require__(8396);
+const { core, octokit, pulls } = __nccwpck_require__(8396);
 
 class PullRequest {
   static async current() {
     const pullNumber = parsePullNumber();
     const { owner, repo } = parseRepo();
     const pullRequest = new PullRequest(pullNumber, owner, repo);
-    await pullRequest.load();
+    await this.load();
     return pullRequest;
   }
 
@@ -22617,6 +22617,7 @@ class PullRequest {
   }
 
   async loadPull() {
+    core.info(`Loading pull from github: ${this.pullNumber}`);
     const res = await pulls.get({
       owner: this.owner,
       repo: this.repo,
@@ -22630,6 +22631,7 @@ class PullRequest {
       await this.loadPull();
     }
 
+    core.info(`Loading diff from github: ${this.pull.diff_url}`);
     const res = await octokit.request(this.pull.diff_url);
     this.diff = parseDiff(res.data);
   }
@@ -22639,6 +22641,9 @@ class PullRequest {
       await this.loadPull();
     }
 
+    core.info(
+      `Loading review comments from github: ${this.pull.review_comments_url}`,
+    );
     const res = await octokit.request(this.pull.review_comments_url);
     this.comments = res.data;
   }
