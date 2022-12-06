@@ -28,6 +28,10 @@ class PullRequest {
       }
     });
 
+    if (!dependencyDiff) {
+      return [];
+    }
+
     const packageJson = await this.getFile(dependencyFile);
     const packageConfig = JSON.parse(packageJson);
     const dependencies = {
