@@ -22554,6 +22554,10 @@ class PullRequest {
       }
     });
 
+    if (!dependencyDiff) {
+      return [];
+    }
+
     const packageJson = await this.getFile(dependencyFile);
     const packageConfig = JSON.parse(packageJson);
     const dependencies = {
@@ -22691,6 +22695,10 @@ class PackageAddition {
 }
 
 async function checkNewPackages(packageJsonDiff, dependencies) {
+  if (!packageJsonDiff) {
+    return [];
+  }
+
   const diffChunks = packageJsonDiff.chunks || [];
   const removedPackages = new Set();
   for (let chunk of diffChunks) {
