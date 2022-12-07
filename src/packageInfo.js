@@ -1,3 +1,4 @@
+const axios = require('axios');
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
 
@@ -7,10 +8,12 @@ module.exports.npmInfo = async (packageName) => {
 };
 
 module.exports.pythonInfo = async (packageName) => {
-  const { stdout } = await exec(
-    `pip-licenses --format=json --with-urls  --packages ${packageName}`,
-  );
-  console.log(stdout);
-  const info = JSON.parse(stdout);
-  return info[0];
+  const response = await axios.get(`https://pypi.org/pypi/${packageName}/json`);
+  const package = {
+    name: packageName,
+    license: response.data.info.license,
+    homepage:
+      response.data.info.home_page || response.data.info.project_urls.homepage,
+  };
+  return package;
 };
