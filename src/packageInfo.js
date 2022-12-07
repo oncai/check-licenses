@@ -10,6 +10,7 @@ module.exports.pythonInfo = async (packageName) => {
   const { stdout } = await exec(
     `pip-licenses --format=json --with-urls  --packages ${packageName}`,
   );
+  console.log(stdout);
   const info = JSON.parse(stdout);
   return info[0];
 };

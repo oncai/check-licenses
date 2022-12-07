@@ -86,7 +86,6 @@ async function checkNewRequirements(requirementsDiff) {
     for (let change of chunk.changes) {
       if (change.type === 'add') {
         const added = parseRequirementFromChange(change.content);
-        console.log('add', added);
         if (removedRequirements.has(added.name) === false) {
           const packageInfo = await pythonInfo(added.name);
           newRequirements.push(
