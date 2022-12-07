@@ -22965,7 +22965,6 @@ async function checkNewRequirements(requirementsDiff) {
     for (let change of chunk.changes) {
       if (change.type === 'add') {
         const added = parseRequirementFromChange(change.content);
-        console.log('add', added);
         if (removedRequirements.has(added.name) === false) {
           const packageInfo = await pythonInfo(added.name);
           newRequirements.push(
@@ -23037,6 +23036,7 @@ module.exports.pythonInfo = async (packageName) => {
   const { stdout } = await exec(
     `pip-licenses --format=json --with-urls  --packages ${packageName}`,
   );
+  console.log(stdout);
   const info = JSON.parse(stdout);
   return info[0];
 };
