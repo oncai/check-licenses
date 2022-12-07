@@ -1,20 +1,13 @@
 /* eslint-disable no-regex-spaces */
-const { npmInfo } = require('./npmInfo');
+const { currentWorkspace } = require('./GithubWorkspace');
+const { npmInfo } = require('./packageInfo');
+const { PackageAddition } = require('./PackageAddition');
+const { currentPullRequest } = require('./PullRequest');
 
 const ADD_PACKAGE_MATCH_REGEX = /\+    "(.*)": "(.*)"/;
 const REMOVE_PACKAGE_MATCH_REGEX = /-    "(.*)": "(.*)"/;
 
-class PackageAddition {
-  constructor(lineNumber, name, version, license, homepage) {
-    this.lineNumber = lineNumber;
-    this.name = name;
-    this.version = version;
-    this.license = license;
-    this.homepage = homepage;
-  }
-}
-
-async function checkNewPackages(packageJsonDiff, dependencies) {
+async function checkNpmNewPackages(packageJsonDiff, dependencies) {
   if (!packageJsonDiff) {
     return [];
   }
@@ -66,4 +59,39 @@ async function checkNewPackages(packageJsonDiff, dependencies) {
   return newPackages;
 }
 
-module.exports = checkNewPackages;
+class NpmDependencies {
+  constructor(dependencyFile) {
+    this.dependencyFile = dependencyFile;
+  }
+
+  async load() {
+    const packageJson = await currentWorkspace.getFile(this.dependencyFile);
+    const packageConfig = JSON.parse(packageJson);
+    this.dependencies = {
+      ...packageConfig.dependencies,
+      ...packageConfig.devDependencies,
+    };
+  }
+
+  async findNewPackages() {
+    if (!this.dependencies) {
+      await this.load();
+    }
+
+    const dependencyDiff = await currentPullRequest.getDiffFor(
+      this.dependencyFile,
+    );
+
+    if (!dependencyDiff) {
+      return [];
+    }
+
+    this.newPackages = await checkNpmNewPackages(
+      dependencyDiff,
+      this.dependencies,
+    );
+    return this.newPackages;
+  }
+}
+
+module.exports = { NpmDependencies };

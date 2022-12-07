@@ -1,45 +1,24 @@
-const fs = require('fs/promises');
 const parseDiff = require('parse-diff');
-const path = require('path');
 
-const checkNewPackages = require('./checkNewPackages');
-const { core, octokit, pulls } = require('./github');
+const { core, octokit, pulls } = require('./action');
 
 class PullRequest {
-  static async current() {
-    const pullNumber = parsePullNumber();
-    const { owner, repo } = parseRepo();
-    const pullRequest = new PullRequest(pullNumber, owner, repo);
-    await pullRequest.load();
-    return pullRequest;
-  }
-
-  constructor(pullNumber, owner, repo) {
+  constructor(pullNumber, { owner, repo }) {
     this.owner = owner;
     this.repo = repo;
     this.pullNumber = pullNumber;
   }
 
-  async checkNewPackages(dependencyFile) {
-    console.assert(this.diff, 'Pull request diff has not been loaded');
-    const dependencyDiff = this.diff.find((file) => {
-      if (file.from === dependencyFile) {
+  async getDiffFor(filePath) {
+    if (!this.diff) {
+      await this.loadDiff();
+    }
+
+    return this.diff.find((file) => {
+      if (file.from === filePath) {
         return true;
       }
     });
-
-    if (!dependencyDiff) {
-      return [];
-    }
-
-    const packageJson = await this.getFile(dependencyFile);
-    const packageConfig = JSON.parse(packageJson);
-    const dependencies = {
-      ...packageConfig.dependencies,
-      ...packageConfig.devDependencies,
-    };
-    this.newPackages = await checkNewPackages(dependencyDiff, dependencies);
-    return this.newPackages;
   }
 
   async addComment(comment) {
@@ -76,12 +55,6 @@ class PullRequest {
   get headSha() {
     console.assert(this.pull, 'Pull request has not been loaded');
     return this.pull.head.sha;
-  }
-
-  async getFile(file) {
-    const currentPath = process.env.GITHUB_WORKSPACE;
-    const fileBuffer = await fs.readFile(path.join(currentPath, file));
-    return fileBuffer.toString('utf-8');
   }
 
   async load() {
@@ -142,6 +115,9 @@ const parsePullNumber = () => {
   return pullRequestId;
 };
 
+const currentPullRequest = new PullRequest(parsePullNumber(), parseRepo());
+
 module.exports = {
   PullRequest,
+  currentPullRequest,
 };
