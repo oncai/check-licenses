@@ -22521,51 +22521,253 @@ try {
 
 /***/ }),
 
-/***/ 8118:
+/***/ 100:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const fs = __nccwpck_require__(9225);
-const parseDiff = __nccwpck_require__(4833);
+const { readFile } = __nccwpck_require__(9225);
 const path = __nccwpck_require__(5622);
 
-const checkNewPackages = __nccwpck_require__(463);
-const { core, octokit, pulls } = __nccwpck_require__(8396);
-
-class PullRequest {
-  static async current() {
-    const pullNumber = parsePullNumber();
-    const { owner, repo } = parseRepo();
-    const pullRequest = new PullRequest(pullNumber, owner, repo);
-    await pullRequest.load();
-    return pullRequest;
+class GithubWorkspace {
+  constructor(path) {
+    this.path = path;
   }
 
-  constructor(pullNumber, owner, repo) {
-    this.owner = owner;
-    this.repo = repo;
-    this.pullNumber = pullNumber;
+  async getFile(file) {
+    const fullPath = path.join(this.path, file);
+    console.log(`Reading workspace file: ${fullPath}`);
+    const fileBuffer = await readFile(fullPath);
+    return fileBuffer.toString('utf-8');
+  }
+}
+
+const currentWorkspace = new GithubWorkspace(process.env.GITHUB_WORKSPACE);
+
+module.exports = {
+  currentWorkspace,
+  GithubWorkspace,
+};
+
+
+/***/ }),
+
+/***/ 3960:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const Mustache = __nccwpck_require__(8272);
+const path = __nccwpck_require__(5622);
+
+const { currentWorkspace } = __nccwpck_require__(100);
+
+class MarkdownTemplate {
+  constructor(filePath) {
+    this.filePath = filePath;
   }
 
-  async checkNewPackages(dependencyFile) {
-    console.assert(this.diff, 'Pull request diff has not been loaded');
-    const dependencyDiff = this.diff.find((file) => {
-      if (file.from === dependencyFile) {
-        return true;
+  async loadTemplate() {
+    const realFilePath =
+      this.filePath.indexOf('./') === 0
+        ? path.join('.github', 'workflows', this.filePath)
+        : this.filePath;
+    this.template = await currentWorkspace.getFile(realFilePath);
+  }
+
+  async render(data) {
+    if (!this.template) {
+      await this.loadTemplate();
+    }
+
+    return Mustache.render(this.template, data);
+  }
+}
+
+module.exports = {
+  MarkdownTemplate,
+};
+
+
+/***/ }),
+
+/***/ 9134:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { NpmDependencies } = __nccwpck_require__(5815);
+const { currentPullRequest } = __nccwpck_require__(8118);
+const { PythonRequirements } = __nccwpck_require__(8187);
+
+class NewPackageFinder {
+  constructor(dependencyFile) {
+    this.dependencyFile = dependencyFile;
+  }
+
+  async find() {
+    await currentPullRequest.load();
+    let dependencies;
+    if (this.dependencyFile.includes('package.json')) {
+      dependencies = new NpmDependencies(this.dependencyFile);
+    } else if (this.dependencyFile.includes('requirements.txt')) {
+      dependencies = new PythonRequirements(this.dependencyFile);
+    } else {
+      console.error(
+        `Error: dependency file ${this.dependencyFile} not supported`,
+      );
+      return null;
+    }
+    const newPackages = await dependencies.findNewPackages();
+    return newPackages;
+  }
+}
+
+module.exports = { NewPackageFinder };
+
+
+/***/ }),
+
+/***/ 5815:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/* eslint-disable no-regex-spaces */
+const { currentWorkspace } = __nccwpck_require__(100);
+const { npmInfo } = __nccwpck_require__(3154);
+const { PackageAddition } = __nccwpck_require__(540);
+const { currentPullRequest } = __nccwpck_require__(8118);
+
+const ADD_PACKAGE_MATCH_REGEX = /\+    "(.*)": "(.*)"/;
+const REMOVE_PACKAGE_MATCH_REGEX = /-    "(.*)": "(.*)"/;
+
+async function checkNpmNewPackages(packageJsonDiff, dependencies) {
+  if (!packageJsonDiff) {
+    return [];
+  }
+
+  const diffChunks = packageJsonDiff.chunks || [];
+  const removedPackages = new Set();
+  for (let chunk of diffChunks) {
+    for (let change of chunk.changes) {
+      if (change.type === 'del') {
+        const match = change.content.match(REMOVE_PACKAGE_MATCH_REGEX);
+        if (match !== null) {
+          const [, packageName] = match;
+          if (dependencies[packageName]) {
+            removedPackages.add(packageName);
+          }
+        }
       }
-    });
+    }
+  }
+
+  const newPackages = [];
+  // add packages for new lines
+  for (let chunk of diffChunks) {
+    for (let change of chunk.changes) {
+      if (change.type === 'add') {
+        const match = change.content.match(ADD_PACKAGE_MATCH_REGEX);
+        if (match !== null) {
+          const [, packageName, packageVersion] = match;
+          if (
+            dependencies[packageName] &&
+            removedPackages.has(packageName) === false
+          ) {
+            const { license, homepage } = await npmInfo(packageName);
+            newPackages.push(
+              new PackageAddition(
+                change.ln,
+                packageName,
+                packageVersion,
+                license || '-',
+                homepage || '-',
+              ),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  return newPackages;
+}
+
+class NpmDependencies {
+  constructor(dependencyFile) {
+    this.dependencyFile = dependencyFile;
+  }
+
+  async load() {
+    const packageJson = await currentWorkspace.getFile(this.dependencyFile);
+    const packageConfig = JSON.parse(packageJson);
+    this.dependencies = {
+      ...packageConfig.dependencies,
+      ...packageConfig.devDependencies,
+    };
+  }
+
+  async findNewPackages() {
+    if (!this.dependencies) {
+      await this.load();
+    }
+
+    const dependencyDiff = await currentPullRequest.getDiffFor(
+      this.dependencyFile,
+    );
 
     if (!dependencyDiff) {
       return [];
     }
 
-    const packageJson = await this.getFile(dependencyFile);
-    const packageConfig = JSON.parse(packageJson);
-    const dependencies = {
-      ...packageConfig.dependencies,
-      ...packageConfig.devDependencies,
-    };
-    this.newPackages = await checkNewPackages(dependencyDiff, dependencies);
+    this.newPackages = await checkNpmNewPackages(
+      dependencyDiff,
+      this.dependencies,
+    );
     return this.newPackages;
+  }
+}
+
+module.exports = { NpmDependencies };
+
+
+/***/ }),
+
+/***/ 540:
+/***/ ((module) => {
+
+class PackageAddition {
+  constructor(lineNumber, name, version, license, homepage) {
+    this.lineNumber = lineNumber;
+    this.name = name;
+    this.version = version;
+    this.license = license;
+    this.homepage = homepage;
+  }
+}
+
+module.exports = { PackageAddition };
+
+
+/***/ }),
+
+/***/ 8118:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const parseDiff = __nccwpck_require__(4833);
+
+const { core, octokit, pulls } = __nccwpck_require__(3348);
+
+class PullRequest {
+  constructor(pullNumber, { owner, repo }) {
+    this.owner = owner;
+    this.repo = repo;
+    this.pullNumber = pullNumber;
+  }
+
+  async getDiffFor(filePath) {
+    if (!this.diff) {
+      await this.loadDiff();
+    }
+
+    return this.diff.find((file) => {
+      if (file.from === filePath) {
+        return true;
+      }
+    });
   }
 
   async addComment(comment) {
@@ -22602,12 +22804,6 @@ class PullRequest {
   get headSha() {
     console.assert(this.pull, 'Pull request has not been loaded');
     return this.pull.head.sha;
-  }
-
-  async getFile(file) {
-    const currentPath = process.env.GITHUB_WORKSPACE;
-    const fileBuffer = await fs.readFile(path.join(currentPath, file));
-    return fileBuffer.toString('utf-8');
   }
 
   async load() {
@@ -22668,90 +22864,131 @@ const parsePullNumber = () => {
   return pullRequestId;
 };
 
+const currentPullRequest = new PullRequest(parsePullNumber(), parseRepo());
+
 module.exports = {
   PullRequest,
+  currentPullRequest,
 };
 
 
 /***/ }),
 
-/***/ 463:
+/***/ 8187:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-/* eslint-disable no-regex-spaces */
-const { npmInfo } = __nccwpck_require__(944);
+const { PackageAddition } = __nccwpck_require__(540);
+const { pythonInfo } = __nccwpck_require__(3154);
+const { currentPullRequest } = __nccwpck_require__(8118);
 
-const ADD_PACKAGE_MATCH_REGEX = /\+    "(.*)": "(.*)"/;
-const REMOVE_PACKAGE_MATCH_REGEX = /-    "(.*)": "(.*)"/;
+class PythonRequirements {
+  constructor(dependencyFile) {
+    this.dependencyFile = dependencyFile;
+  }
 
-class PackageAddition {
-  constructor(lineNumber, name, version, license, homepage) {
-    this.lineNumber = lineNumber;
-    this.name = name;
-    this.version = version;
-    this.license = license;
-    this.homepage = homepage;
+  async findNewPackages() {
+    const requirementsDiff = await currentPullRequest.getDiffFor(
+      this.dependencyFile,
+    );
+    const newRequirements = checkNewRequirements(requirementsDiff);
+    return newRequirements;
   }
 }
 
-async function checkNewPackages(packageJsonDiff, dependencies) {
-  if (!packageJsonDiff) {
+module.exports = {
+  PythonRequirements,
+};
+
+function firstIndexOf(str, searchStrings) {
+  const indexes = searchStrings.map((searchStr) => {
+    if (str.includes(searchStr)) {
+      return str.indexOf(searchStr);
+    }
+
+    return Number.MAX_VALUE;
+  });
+
+  const index = Math.min(...indexes);
+  return index === Number.MAX_VALUE ? null : index;
+}
+
+function lastIndexOf(str, searchStrings) {
+  const indexes = searchStrings.map((searchStr) => {
+    if (str.includes(searchStr)) {
+      return str.lastIndexOf(searchStr);
+    }
+
+    return Number.MIN_VALUE;
+  });
+
+  const index = Math.max(...indexes);
+  return index === Number.MIN_VALUE ? null : index;
+}
+
+function parseRequirementFromChange(requirementChange) {
+  // remove + or - of change
+  const requirementLine = requirementChange.slice(1);
+  // find end of requirement name
+  const delimeters = ['[', ']', '=', '<', '>'];
+  const endOfNameIndex = firstIndexOf(requirementLine, delimeters);
+  const startOfVersionIndex = lastIndexOf(requirementLine, delimeters);
+  const name =
+    endOfNameIndex !== null
+      ? requirementLine.slice(0, endOfNameIndex)
+      : requirementLine;
+  const version =
+    startOfVersionIndex !== null
+      ? requirementLine.slice(startOfVersionIndex + 1)
+      : requirementLine;
+  return { name, version };
+}
+
+async function checkNewRequirements(requirementsDiff) {
+  if (!requirementsDiff) {
     return [];
   }
 
-  const diffChunks = packageJsonDiff.chunks || [];
-  const removedPackages = new Set();
+  const diffChunks = requirementsDiff.chunks || [];
+  const removedRequirements = new Set();
   for (let chunk of diffChunks) {
     for (let change of chunk.changes) {
       if (change.type === 'del') {
-        const match = change.content.match(REMOVE_PACKAGE_MATCH_REGEX);
-        if (match !== null) {
-          const [, packageName] = match;
-          if (dependencies[packageName]) {
-            removedPackages.add(packageName);
-          }
-        }
+        const removed = parseRequirementFromChange(change.content);
+        removedRequirements.add(removed.name);
       }
     }
   }
 
-  const newPackages = [];
+  const newRequirements = [];
   // add packages for new lines
   for (let chunk of diffChunks) {
     for (let change of chunk.changes) {
       if (change.type === 'add') {
-        const match = change.content.match(ADD_PACKAGE_MATCH_REGEX);
-        if (match !== null) {
-          const [, packageName, packageVersion] = match;
-          if (
-            dependencies[packageName] &&
-            removedPackages.has(packageName) === false
-          ) {
-            const { license, homepage } = await npmInfo(packageName);
-            newPackages.push(
-              new PackageAddition(
-                change.ln,
-                packageName,
-                packageVersion,
-                license || '-',
-                homepage || '-',
-              ),
-            );
-          }
+        const added = parseRequirementFromChange(change.content);
+        console.log('add', added);
+        if (removedRequirements.has(added.name) === false) {
+          const packageInfo = await pythonInfo(added.name);
+          newRequirements.push(
+            new PackageAddition(
+              change.ln,
+              added.name,
+              added.version,
+              packageInfo.License,
+              packageInfo.URL,
+            ),
+          );
         }
       }
     }
   }
 
-  return newPackages;
+  return newRequirements;
 }
-
-module.exports = checkNewPackages;
 
 
 /***/ }),
 
-/***/ 8396:
+/***/ 3348:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 __nccwpck_require__(2437).config();
@@ -22767,8 +23004,8 @@ if (process.env.NODE_ENV === 'development') {
     },
   };
   const MockInputs = {
-    'dependency-file': 'package.json',
-    'message-file': './new-package-warning.md',
+    'dependency-file': process.env.DEPENDENCY_FILE,
+    'message-file': process.env.MESSAGE_FILE,
   };
   const { Octokit } = __nccwpck_require__(7467);
   const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
@@ -22785,7 +23022,7 @@ if (process.env.NODE_ENV === 'development') {
 
 /***/ }),
 
-/***/ 944:
+/***/ 3154:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 const { promisify } = __nccwpck_require__(1669);
@@ -22794,6 +23031,14 @@ const exec = promisify(__nccwpck_require__(3129).exec);
 module.exports.npmInfo = async (packageName) => {
   const { stdout } = await exec(`npm info ${packageName} --json`);
   return JSON.parse(stdout);
+};
+
+module.exports.pythonInfo = async (packageName) => {
+  const { stdout } = await exec(
+    `pip-licenses --format=json --with-urls  --packages ${packageName}`,
+  );
+  const info = JSON.parse(stdout);
+  return info[0];
 };
 
 
@@ -23016,23 +23261,29 @@ module.exports = require("zlib");
 var __webpack_exports__ = {};
 // This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
 (() => {
-const Mustache = __nccwpck_require__(8272);
-const path = __nccwpck_require__(5622);
-
-const { core } = __nccwpck_require__(8396);
-const { PullRequest } = __nccwpck_require__(8118);
+const { core } = __nccwpck_require__(3348);
+const { MarkdownTemplate } = __nccwpck_require__(3960);
+const { NewPackageFinder } = __nccwpck_require__(9134);
+const { currentPullRequest } = __nccwpck_require__(8118);
 
 async function run() {
   try {
     const dependencyFile = core.getInput('dependency-file');
-    const pr = await PullRequest.current();
-    const messageTemplate = await getMessageTemplate(pr);
-    const newPackages = await pr.checkNewPackages(dependencyFile);
-    core.info(`${newPackages.length} new packages found`);
+    const newPackageFinder = new NewPackageFinder(dependencyFile);
+    const newPackages = await newPackageFinder.find();
+    if (newPackages === null) {
+      return;
+    }
+
+    console.log(`${newPackages.length} new packages found`);
+
+    const newPackageMessage = new MarkdownTemplate(
+      core.getInput('message-file'),
+    );
     for (const newPackage of newPackages) {
-      const body = Mustache.render(messageTemplate, newPackage);
-      core.info(`Posting comment: \n\n${body}`);
-      await pr.addComment({
+      const body = await newPackageMessage.render(newPackage);
+      console.log(`Posting comment: \n\n${body}`);
+      await currentPullRequest.addComment({
         path: dependencyFile,
         line: newPackage.lineNumber,
         body,
@@ -23042,16 +23293,6 @@ async function run() {
     console.error(error);
     core.setFailed(error.message);
   }
-}
-
-async function getMessageTemplate(pr) {
-  const messageFile = core.getInput('message-file');
-  const messageFilePath =
-    messageFile.indexOf('./') === 0
-      ? path.join('.github', 'workflows', messageFile)
-      : messageFile;
-  core.info(`Reading message template from: ${messageFilePath}`);
-  return await pr.getFile(messageFilePath);
 }
 
 run();
