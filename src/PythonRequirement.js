@@ -93,8 +93,8 @@ async function checkNewRequirements(requirementsDiff) {
               change.ln,
               added.name,
               added.version,
-              packageInfo.License,
-              packageInfo.URL,
+              packageInfo ? packageInfo.License : 'failed',
+              packageInfo ? packageInfo.URL : 'failed',
             ),
           );
         }
