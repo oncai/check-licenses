@@ -1,46 +1,29 @@
-const fs = require('fs/promises');
 const parseDiff = require('parse-diff');
-const path = require('path');
 
-const checkNewPackages = require('./checkNewPackages');
-const { octokit, pulls } = require('./github');
+const { core, octokit, pulls } = require('./action');
 
 class PullRequest {
-  static async current() {
-    const pullNumber = parsePullNumber();
-    const { owner, repo } = parseRepo();
-    const pullRequest = new PullRequest(pullNumber, owner, repo);
-    await pullRequest.load();
-    return pullRequest;
-  }
-
-  constructor(pullNumber, owner, repo) {
+  constructor(pullNumber, { owner, repo }) {
     this.owner = owner;
     this.repo = repo;
     this.pullNumber = pullNumber;
   }
 
-  async checkNewPackages(dependencyFile) {
-    console.assert(this.diff, 'Pull request diff has not been loaded');
-    const dependencyDiff = this.diff.find((file) => {
-      if (file.from === dependencyFile) {
+  async getDiffFor(filePath) {
+    if (!this.diff) {
+      await this.loadDiff();
+    }
+
+    return this.diff.find((file) => {
+      if (file.from === filePath) {
         return true;
       }
     });
-
-    const packageJson = await this.getFile(dependencyFile);
-    const packageConfig = JSON.parse(packageJson);
-    const dependencies = {
-      ...packageConfig.dependencies,
-      ...packageConfig.devDependencies,
-    };
-    this.newPackages = await checkNewPackages(dependencyDiff, dependencies);
-    return this.newPackages;
   }
 
   async addComment(comment) {
     if (this.doesCommentExist(comment)) {
-      console.log('Comment exists -- skipping');
+      core.info('Comment exists -- skipping');
       return;
     }
 
@@ -74,16 +57,6 @@ class PullRequest {
     return this.pull.head.sha;
   }
 
-  async getFile(file) {
-    // const filePath = [this.owner, this.repo, this.headSha, file].join('/');
-    // const fileUrl = `https://raw.githubusercontent.com/${filePath}`;
-    // const res = await octokit.request(fileUrl);
-    const fileBuffer = await fs.readFile(
-      path.join(process.env.GITHUB_WORKSPACE, file),
-    );
-    return fileBuffer.toString('utf-8');
-  }
-
   async load() {
     await this.loadPull();
     await this.loadDiff();
@@ -91,6 +64,7 @@ class PullRequest {
   }
 
   async loadPull() {
+    core.info(`Loading pull from github: ${this.pullNumber}`);
     const res = await pulls.get({
       owner: this.owner,
       repo: this.repo,
@@ -104,7 +78,15 @@ class PullRequest {
       await this.loadPull();
     }
 
-    const res = await octokit.request(this.pull.diff_url);
+    core.info(`Loading diff from github: ${this.pullNumber}`);
+    const res = await pulls.get({
+      owner: this.owner,
+      repo: this.repo,
+      pull_number: this.pullNumber,
+      mediaType: {
+        format: 'diff',
+      },
+    });
     this.diff = parseDiff(res.data);
   }
 
@@ -113,6 +95,9 @@ class PullRequest {
       await this.loadPull();
     }
 
+    core.info(
+      `Loading review comments from github: ${this.pull.review_comments_url}`,
+    );
     const res = await octokit.request(this.pull.review_comments_url);
     this.comments = res.data;
   }
@@ -130,6 +115,9 @@ const parsePullNumber = () => {
   return pullRequestId;
 };
 
+const currentPullRequest = new PullRequest(parsePullNumber(), parseRepo());
+
 module.exports = {
   PullRequest,
+  currentPullRequest,
 };

@@ -11,8 +11,8 @@ if (process.env.NODE_ENV === 'development') {
     },
   };
   const MockInputs = {
-    'dependency-file': 'package.json',
-    'message-file': './new-package-warning.md',
+    'dependency-file': process.env.DEPENDENCY_FILE,
+    'message-file': process.env.MESSAGE_FILE,
   };
   const { Octokit } = require('octokit');
   const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
